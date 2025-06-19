@@ -1,0 +1,40 @@
+/* Tambahkan ke stylesheet Anda */
+.dtr-bs-table tbody .rowReorder-drag {
+    cursor: grab; /* Menggunakan "grab" untuk menunjukkan kemampuan seret */
+}
+
+.dtr-bs-table tbody .rowReorder-drag:active {
+    cursor: grabbing; /* Menggunakan "grabbing" saat sedang menyeret */
+}
+
+#areaemboss {
+    margin-top: 40px; 
+    margin-left: 80px; 
+}
+
+#areafoils {
+    margin-top: 40px; 
+    margin-left: 80px; 
+}
+
+#canvass {
+    margin-top: -20px; 
+    margin-left: 80px; 
+}
+
+@media (max-width: 768px) {
+    /* Contoh: Perkecil padding modal di mobile */
+    .modal-body {
+        padding: 1rem;
+    }
+    /* Contoh: Buat input di filter laporan jadi full width di mobile */
+    .filter-card .form-row .col-md-2,
+    .filter-card .form-row .col-md-3,
+    .filter-card .form-row .col-md-4 {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+    .filter-card .form-row .btn-block {
+        margin-top: 0.5rem !important; /* Sesuaikan margin jika perlu */
+    }
+}
