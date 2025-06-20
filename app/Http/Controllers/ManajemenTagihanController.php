@@ -48,35 +48,46 @@ class ManajemenTagihanController extends Controller
         return view('tagihan.manage.index', compact('tahuns', 'bulans', 'statuses', 'wilayahs', 'metode_pembayaran_list'));
     }
 
-    /**
-     * Helper method untuk menghitung denda saat ini untuk satu tagihan.
-     */
-    private function calculateCurrentDenda($row, $semuaAturanDenda, $today)
+    private function calculateCurrentDenda($row, $semuaAturanDenda, $checkDate)
     {
         $row = (object) $row;
+        // Jika tidak ada volume pemakaian, tidak ada denda.
         if (!property_exists($row, 'volume_pemakaian_saat_tagihan') || (float)$row->volume_pemakaian_saat_tagihan == 0) {
             return 0;
         }
 
-        $tanggalJatuhTempo = Carbon::parse($row->tanggal_jatuh_tempo);
-        if ($today->lte($tanggalJatuhTempo)) {
+        $tanggalPeriksa = $checkDate->copy()->startOfDay(); // Contoh: 19 Juni 2025
+        $periodeTagihan = Carbon::create($row->periode_tagihan_tahun, $row->periode_tagihan_bulan, 1); // Contoh: 1 April 2025
+
+        // Aturan 1: Batas toleransi pertama adalah tanggal 20 bulan berikutnya.
+        $batasToleransi = $periodeTagihan->copy()->addMonth()->day(20); // Contoh: 20 Mei 2025
+
+        // Jika tanggal periksa belum melewati batas toleransi, tidak ada denda.
+        if ($tanggalPeriksa->lte($batasToleransi)) {
             return 0;
         }
 
-        $bulanTerlambat = $tanggalJatuhTempo->diffInMonths($today);
-        $keterlambatanLevel = $bulanTerlambat;
+        // Jika sudah lewat, denda level 0 (paling dasar) sudah pasti aktif.
+        $keterlambatanLevel = 0;
 
-        // Ambil SEMUA aturan denda yang levelnya kurang dari atau sama dengan level keterlambatan saat ini
-        $aturanDendaBerlaku = $semuaAturanDenda
-            ->filter(fn($aturan) => $aturan->keterlambatan_bulan <= $keterlambatanLevel);
+        // Aturan 2: Cek untuk level denda berikutnya, yang dimulai setiap TANGGAL 1
+        // pada bulan-bulan berikutnya setelah bulan jatuh tempo.
+        $bulanPengecekan = $periodeTagihan->copy()->addMonths(2)->startOfMonth(); // Contoh: 1 Juni 2025
 
-        if ($aturanDendaBerlaku->isNotEmpty()) {
-            // JUMLAHKAN semua nominal denda dari aturan yang terlewati
-            return $aturanDendaBerlaku->sum('nominal_denda_tambah');
+        while ($tanggalPeriksa->gte($bulanPengecekan)) {
+            $keterlambatanLevel++;
+            $bulanPengecekan->addMonth(); // Siapkan untuk iterasi berikutnya (menjadi 1 Juli, 1 Agu, dst.)
         }
 
-        return 0;
+        // Akumulasikan semua denda dari aturan yang levelnya terlewati.
+        // Misal level=1, maka akan menjumlahkan denda untuk level 0 dan 1.
+        $dendaTerakumulasi = $semuaAturanDenda
+            ->where('keterlambatan_bulan', '<=', $keterlambatanLevel)
+            ->sum('nominal_denda_tambah');
+
+        return $dendaTerakumulasi;
     }
+
 
     public function getTagihanData(Request $request)
     {
@@ -223,8 +234,7 @@ class ManajemenTagihanController extends Controller
                     ->whereDate('berlaku_mulai', '<=', $today->format('Y-m-d'))
                     ->where(function ($q) use ($today) {
                         $q->whereDate('berlaku_sampai', '>=', $today->format('Y-m-d'))->orWhereNull('berlaku_sampai');
-                    })->get()->keyBy('keterlambatan_bulan');
-
+                    })->get();
                 $dendaSekarang = $this->calculateCurrentDenda($tagihan, $semuaAturanDenda, $today);
             } else {
                 $dendaSekarang = (float)$tagihan->denda;
@@ -236,19 +246,20 @@ class ManajemenTagihanController extends Controller
             $tagihan->denda_sekarang_rp = 'Rp ' . number_format($dendaSekarang, 0, ',', '.');
             $tagihan->total_tagihan_sekarang_rp = 'Rp ' . number_format($totalTagihanSekarang, 0, ',', '.');
 
-            // Formatting data lain yang sudah ada
+            // Formatting data lain
             $tagihan->tanggal_terbit_formatted = Carbon::parse($tagihan->tanggal_terbit)->isoFormat('D MMMM YYYY');
             $tagihan->tanggal_jatuh_tempo_formatted = Carbon::parse($tagihan->tanggal_jatuh_tempo)->isoFormat('D MMMM YYYY');
             $tagihan->periode_tagihan_formatted = Carbon::create()->month($tagihan->periode_tagihan_bulan)->isoFormat('MMMM') . ' ' . $tagihan->periode_tagihan_tahun;
             $tagihan->tanggal_catat_meter_formatted = $tagihan->tanggal_catat_meter ? Carbon::parse($tagihan->tanggal_catat_meter)->isoFormat('D MMMM YYYY') : '-';
             $tagihan->abonemen_saat_tagihan_rp = 'Rp ' . number_format($tagihan->abonemen_saat_tagihan, 0, ',', '.');
             $tagihan->tarif_per_m3_saat_tagihan_rp = 'Rp ' . number_format($tagihan->tarif_per_m3_saat_tagihan, 0, ',', '.');
-            $tagihan->volume_pemakaian_saat_tagihan_formatted = $tagihan->volume_pemakaian_saat_tagihan;
+            $tagihan->volume_pemakaian_saat_tagihan_formatted = number_format($tagihan->volume_pemakaian_saat_tagihan, 0, ',', '.');
             $tagihan->biaya_pemakaian_rp = 'Rp ' . number_format($tagihan->biaya_pemakaian, 0, ',', '.');
             $tagihan->sub_total_tagihan_rp = 'Rp ' . number_format($tagihan->sub_total_tagihan, 0, ',', '.');
             $tagihan->denda_rp = 'Rp ' . number_format($tagihan->denda, 0, ',', '.');
             $tagihan->total_tagihan_rp = 'Rp ' . number_format($tagihan->total_tagihan, 0, ',', '.');
             $tagihan->created_at_formatted = Carbon::parse($tagihan->created_at)->isoFormat('D MMMM YYYY, HH:mm');
+
 
             return response()->json(['success' => true, 'data' => $tagihan]);
         }
