@@ -47,19 +47,44 @@ class CekTagihanController extends Controller
         return response()->json(['results' => $pelanggans]);
     }
 
-    private function calculateCurrentDenda($row, $semuaAturanDenda, $today)
+    private function calculateCurrentDenda($row, $semuaAturanDenda, $checkDate)
     {
         $row = (object) $row;
+        // Jika tidak ada volume pemakaian, tidak ada denda.
         if (!property_exists($row, 'volume_pemakaian_saat_tagihan') || (float)$row->volume_pemakaian_saat_tagihan == 0) {
             return 0;
         }
-        $tanggalJatuhTempo = Carbon::parse($row->tanggal_jatuh_tempo);
-        if ($today->lte($tanggalJatuhTempo)) {
+
+        $tanggalPeriksa = $checkDate->copy()->startOfDay(); // Contoh: 19 Juni 2025
+        $periodeTagihan = Carbon::create($row->periode_tagihan_tahun, $row->periode_tagihan_bulan, 1); // Contoh: 1 April 2025
+
+        // Aturan 1: Batas toleransi pertama adalah tanggal 20 bulan berikutnya.
+        $batasToleransi = $periodeTagihan->copy()->addMonth()->day(20); // Contoh: 20 Mei 2025
+
+        // Jika tanggal periksa belum melewati batas toleransi, tidak ada denda.
+        if ($tanggalPeriksa->lte($batasToleransi)) {
             return 0;
         }
-        $bulanTerlambat = $tanggalJatuhTempo->diffInMonths($today);
-        $aturanDendaBerlaku = $semuaAturanDenda->filter(fn($aturan) => $aturan->keterlambatan_bulan <= $bulanTerlambat);
-        return $aturanDendaBerlaku->isNotEmpty() ? $aturanDendaBerlaku->sum('nominal_denda_tambah') : 0;
+
+        // Jika sudah lewat, denda level 0 (paling dasar) sudah pasti aktif.
+        $keterlambatanLevel = 0;
+
+        // Aturan 2: Cek untuk level denda berikutnya, yang dimulai setiap TANGGAL 1
+        // pada bulan-bulan berikutnya setelah bulan jatuh tempo.
+        $bulanPengecekan = $periodeTagihan->copy()->addMonths(2)->startOfMonth(); // Contoh: 1 Juni 2025
+
+        while ($tanggalPeriksa->gte($bulanPengecekan)) {
+            $keterlambatanLevel++;
+            $bulanPengecekan->addMonth(); // Siapkan untuk iterasi berikutnya (menjadi 1 Juli, 1 Agu, dst.)
+        }
+
+        // Akumulasikan semua denda dari aturan yang levelnya terlewati.
+        // Misal level=1, maka akan menjumlahkan denda untuk level 0 dan 1.
+        $dendaTerakumulasi = $semuaAturanDenda
+            ->where('keterlambatan_bulan', '<=', $keterlambatanLevel)
+            ->sum('nominal_denda_tambah');
+
+        return $dendaTerakumulasi;
     }
 
     public function getTagihanData(Request $request)

@@ -162,6 +162,11 @@ class LaporanTunggakanController extends Controller
 
     private function getRekapData(Request $request)
     {
+        // MODIFIKASI: Ambil data yang dibutuhkan untuk kalkulasi denda di awal
+        $today = Carbon::now();
+        $semuaAturanDenda = DB::table('aturan_denda')->get(); // Mengambil semua aturan denda
+
+        // Bagian ini tetap sama
         $end_date = Carbon::now();
         $start_date = Carbon::now()->subMonths(4)->startOfMonth();
 
@@ -174,6 +179,7 @@ class LaporanTunggakanController extends Controller
             ];
         }
 
+        // Query pelanggan tetap sama
         $pelangganQuery = DB::table('pelanggan as p')->where('p.status_pelanggan', 'Aktif');
         if ($request->filled('filter_wilayah_tunggakan')) {
             $pelangganQuery->where('p.wilayah_id', $request->filter_wilayah_tunggakan);
@@ -186,12 +192,19 @@ class LaporanTunggakanController extends Controller
         }
         $pelanggans = $pelangganQuery->orderBy('p.nama_pelanggan', 'asc')->get(['pelanggan_id', 'nama_pelanggan', 'no_meter']);
 
+        // MODIFIKASI: Query tunggakan diubah untuk mengambil kolom-kolom yang diperlukan untuk menghitung denda
         $tunggakans = DB::table('tagihan')
             ->whereIn('pelanggan_id', $pelanggans->pluck('pelanggan_id'))
             ->whereIn('status_tagihan', ['BelumLunas', 'LunasSebagian'])
             ->where('tanggal_jatuh_tempo', '<', now())
             ->whereBetween('tanggal_terbit', [$start_date->toDateString(), $end_date->endOfDay()])
-            ->get(['pelanggan_id', 'tanggal_terbit', 'total_tagihan'])
+            ->get([
+                'pelanggan_id',
+                'tanggal_terbit',
+                'sub_total_tagihan', // Menggunakan sub_total_tagihan sebagai dasar tunggakan pokok
+                'tanggal_jatuh_tempo', // Diperlukan untuk hitung denda
+                'volume_pemakaian_saat_tagihan' // Diperlukan untuk hitung denda
+            ])
             ->groupBy('pelanggan_id');
 
         $rekapData = [];
@@ -203,15 +216,30 @@ class LaporanTunggakanController extends Controller
 
             if (isset($tunggakans[$pelanggan->pelanggan_id])) {
                 $tunggakanPelanggan = $tunggakans[$pelanggan->pelanggan_id];
+
+                // MODIFIKASI: Proses setiap tagihan untuk menghitung denda dan menambahkannya ke pokok
                 foreach ($tunggakanPelanggan as $tunggakan) {
                     $periodeTunggakan = Carbon::parse($tunggakan->tanggal_terbit);
                     $bulanTunggakan = strtoupper($periodeTunggakan->isoFormat('MMMM'));
 
+                    // Hitung denda saat ini untuk tagihan ini menggunakan fungsi yang sudah ada
+                    $dendaSaatIni = $this->calculateCurrentDenda($tunggakan, $semuaAturanDenda, $today);
+
+                    // Jumlahkan tagihan pokok dengan denda yang baru dihitung
+                    $jumlahDenganDenda = (float)$tunggakan->sub_total_tagihan + $dendaSaatIni;
+
                     if (array_key_exists($bulanTunggakan, $rowData)) {
-                        $rowData[$bulanTunggakan] += $tunggakan->total_tagihan;
+                        // Tambahkan jumlah yang SUDAH TERMASUK DENDA ke bulan yang sesuai
+                        $rowData[$bulanTunggakan] += $jumlahDenganDenda;
                     }
                 }
-                $rowData['total_tunggakan'] = $tunggakanPelanggan->sum('total_tagihan');
+
+                // MODIFIKASI: Hitung ulang total tunggakan dari jumlah per bulan yang sudah mencakup denda
+                $totalTunggakanPelanggan = 0;
+                foreach ($months as $month) {
+                    $totalTunggakanPelanggan += $rowData[strtoupper($month['name'])];
+                }
+                $rowData['total_tunggakan'] = $totalTunggakanPelanggan;
             }
 
             if ($rowData['total_tunggakan'] > 0) {

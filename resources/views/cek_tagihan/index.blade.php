@@ -195,6 +195,7 @@
             var table = $('#data-tagihan-pelanggan').DataTable({
                 processing: true,
                 serverSide: true,
+                autoWidth: false,
                 ajax: {
                     url: "{{ route('cek_tagihan.get_data') }}",
                     type: "GET",
@@ -210,7 +211,8 @@
                     },
                     {
                         data: 'tagihan_id',
-                        name: 'tg.tagihan_id'
+                        name: 'tg.tagihan_id',
+                        width: '50px'
                     },
                     // {
                     //     data: 'id_pelanggan_unik',
@@ -237,18 +239,21 @@
                         data: 'meter_awal',
                         name: 'tg.meter_awal',
                         className: 'text-right',
+                        width: '60px',
                         render: $.fn.dataTable.render.number('.', ',', 0)
                     },
                     {
                         data: 'meter_akhir',
                         name: 'tg.meter_akhir',
                         className: 'text-right',
+                        width: '60px',
                         render: $.fn.dataTable.render.number('.', ',', 0)
                     },
                     {
                         data: 'volume_pemakaian',
                         name: 'tg.volume_pemakaian',
                         className: 'text-right',
+                        width: '80px',
                         render: $.fn.dataTable.render.number('.', ',', 0)
                     },
                     {
